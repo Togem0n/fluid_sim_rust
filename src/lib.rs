@@ -18,11 +18,16 @@ struct State {
 impl State {
     pub async fn new(window: &Window) -> Self {
         let size = window.inner_size();
-
+        
+        // crate wgpu instance based on the graphics
+        // if you know the one your computer is using, you can also specify it as down below code
+        // let instance = wgpu::Instance::new(wgpu::Backends::METAL);
         let instance = wgpu::Instance::new(wgpu::Backends::all());
+
         let surface = unsafe {
             instance.create_surface(window)
         };
+
         let adapter = instance.request_adapter(
             &wgpu::RequestAdapterOptions{
                 power_preference: wgpu::PowerPreference::default(),
@@ -47,6 +52,7 @@ impl State {
             None, // Trace path
         ).await.unwrap();
 
+        // configure the surface (render the output of fragment shader)
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface.get_supported_formats(&adapter)[0],
@@ -57,12 +63,16 @@ impl State {
         };
         surface.configure(&device, &config);
 
+        // load shader
         let shader = device.create_shader_module
                                     (wgpu::ShaderModuleDescriptor{
             label: Some("Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
+        // what we have done so far are basically just initialization steps
+        // they are more or less the same in different wgpu application
+        // after initialization, the rendering pipeline and shadering might differ from applications
         let render_pipeline_layout = device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor{
                 label: Some("Render pipeline layout"),
@@ -78,8 +88,13 @@ impl State {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: "vs_main",
-                buffers: &[],
+                buffers: &[],   // the buffer tells GPU what type of vertex we pass to vertex buffer
+                                // since we just render a simple triangle, we defines the vertex in
+                                // vertex shader directly.
+                                // However, if we want GPU to store vertex data, we will need to palce
+                                // something here.
             },
+            // fragment is technically optional (so there is Some)
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "fs_main",
@@ -93,6 +108,7 @@ impl State {
                 })],
             }),
             primitive: wgpu::PrimitiveState {
+                // How we define how we want GPU to interpret the vertices
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
@@ -142,6 +158,10 @@ impl State {
 
     fn update(&mut self) {}
 
+    // since GPU is a independent coprocessor
+    // all GPU commands run asynchronously.
+    // Therefore we made GPU commands into a list and fetch them when needed.
+    // create_command_encoder store commands in the buffer and pass it to the GPU at some points
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
         let view = output
@@ -170,7 +190,7 @@ impl State {
                         store: true,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: None, // since triangle
             });
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.draw(0..3, 0..1);
@@ -190,7 +210,6 @@ pub async fn run(){
     let window = WindowBuilder::new().build(&event_loop).unwrap();
 
     // loading shader from disk 
-
 
     let mut state = State::new(&window).await;
 
