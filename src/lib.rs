@@ -1,5 +1,7 @@
 use gfx_hal::{window::{Surface, self}, display::SurfaceTransform};
-use std::iter::{self, repeat};
+use wgpu::{PrimitiveTopology, IndexFormat, ShaderSource};
+use core::num;
+use std::{iter::{self, repeat}, string, borrow::Cow};
 use winit::{
     window::{Window, WindowBuilder}, 
     event_loop::{ControlFlow, EventLoop},
@@ -15,8 +17,15 @@ struct State {
     render_pipeline: wgpu::RenderPipeline,
 }
 
+struct Inputs <'a> {
+    pub source: ShaderSource<'a>,
+    pub topology: PrimitiveTopology,
+    pub strip_index_format: Option<IndexFormat>,
+    pub num_vertices: u32,
+}
+
 impl State {
-    pub async fn new(window: &Window) -> Self {
+    pub async fn new(window: &Window, inputs: Inputs<'_>) -> Self {
         let size = window.inner_size();
         
         // crate wgpu instance based on the graphics
@@ -67,7 +76,7 @@ impl State {
         let shader = device.create_shader_module
                                     (wgpu::ShaderModuleDescriptor{
             label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shader_primitive.wgsl").into()),
         });
 
         // what we have done so far are basically just initialization steps
@@ -109,8 +118,8 @@ impl State {
             }),
             primitive: wgpu::PrimitiveState {
                 // How we define how we want GPU to interpret the vertices
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
+                topology: inputs.topology, 
+                strip_index_format: inputs.strip_index_format,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
                 // Setting this to anything other than Fill requires Features::POLYGON_MODE_LINE
@@ -162,7 +171,7 @@ impl State {
     // all GPU commands run asynchronously.
     // Therefore we made GPU commands into a list and fetch them when needed.
     // create_command_encoder store commands in the buffer and pass it to the GPU at some points
-    fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
+    fn render(&mut self, num_vertices: u32) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture
@@ -190,10 +199,12 @@ impl State {
                         store: true,
                     },
                 })],
-                depth_stencil_attachment: None, // since triangle
+                depth_stencil_attachment: None, // since we're drawing 2d triangle that doesnt
+                                                // really have a depth
             });
             render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.draw(0..3, 0..1);
+            render_pass.draw(0..num_vertices, 0..1);
+            // pass in the in_vertex_index here
         }
 
         self.queue.submit(iter::once(encoder.finish()));
@@ -205,13 +216,39 @@ impl State {
 }
 
 pub async fn run(){
+
+    let mut primitive_type = "point-list";
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1{
+        primitive_type = &args[1];
+    }
+
+    let mut topology = wgpu::PrimitiveTopology::PointList;
+    let mut index_format: Option<IndexFormat> = None;
+
+    if primitive_type == "line-list" {
+        topology = wgpu::PrimitiveTopology::LineList;
+        index_format = None;
+    }else if primitive_type == "line-strip" {
+        topology = wgpu::PrimitiveTopology::LineStrip;
+        index_format = Some(wgpu::IndexFormat::Uint32);
+    }
+
+    let num_vertices:u32 = 6; 
+    let inputs = Inputs{
+        source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader_primitive.wgsl"))),
+        topology: topology,
+        strip_index_format: index_format,
+        num_vertices: num_vertices,
+    };
+
     // create window
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new().build(&event_loop).unwrap();
 
     // loading shader from disk 
 
-    let mut state = State::new(&window).await;
+    let mut state = State::new(&window, inputs).await;
 
     event_loop.run(move |event, _, control_flow| {
         match event {
@@ -245,7 +282,7 @@ pub async fn run(){
             }
             Event::RedrawRequested(window_id) if window_id == window.id() => {
                 state.update();
-                match state.render() {
+                match state.render(num_vertices) {
                     Ok(_) => {}
                     // Reconfigure the surface if it's lost or outdated
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => state.resize(state.size),
