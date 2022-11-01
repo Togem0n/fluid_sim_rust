@@ -76,7 +76,7 @@ impl State {
         let shader = device.create_shader_module
                                     (wgpu::ShaderModuleDescriptor{
             label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader_primitive.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shader_triangle.wgsl").into()),
         });
 
         // what we have done so far are basically just initialization steps
@@ -223,7 +223,7 @@ pub async fn run(){
         primitive_type = &args[1];
     }
 
-    let mut topology = wgpu::PrimitiveTopology::PointList;
+    let mut topology = wgpu::PrimitiveTopology::TriangleList;
     let mut index_format: Option<IndexFormat> = None;
 
     if primitive_type == "line-list" {
@@ -232,12 +232,12 @@ pub async fn run(){
     }else if primitive_type == "line-strip" {
         topology = wgpu::PrimitiveTopology::LineStrip;
         index_format = Some(wgpu::IndexFormat::Uint32);
-    }else if primitive_type == "triangle-list" {
-        topology = wgpu::PrimitiveTopology::TriangleList;
-        index_format = None;
+    }else if primitive_type == "triangle-strip" {
+        topology = wgpu::PrimitiveTopology::TriangleStrip;
+        index_format = Some(wgpu::IndexFormat::Uint32);
     }
 
-    let num_vertices:u32 = 6; 
+    let num_vertices:u32 = 9; 
     let inputs = Inputs{
         source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader_primitive.wgsl"))),
         topology: topology,
