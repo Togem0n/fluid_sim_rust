@@ -217,7 +217,7 @@ impl State {
 
 pub async fn run(){
 
-    let mut primitive_type = "point-list";
+    let mut primitive_type = "triangle-list";
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1{
         primitive_type = &args[1];
@@ -232,6 +232,9 @@ pub async fn run(){
     }else if primitive_type == "line-strip" {
         topology = wgpu::PrimitiveTopology::LineStrip;
         index_format = Some(wgpu::IndexFormat::Uint32);
+    }else if primitive_type == "triangle-list" {
+        topology = wgpu::PrimitiveTopology::TriangleList;
+        index_format = None;
     }
 
     let num_vertices:u32 = 6; 
