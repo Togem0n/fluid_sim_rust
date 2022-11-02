@@ -1,12 +1,62 @@
 use gfx_hal::{window::{Surface, self}, display::SurfaceTransform};
-use wgpu::{PrimitiveTopology, IndexFormat, ShaderSource};
+use rand::seq::index;
+use wgpu::{PrimitiveTopology, IndexFormat, ShaderSource, util::DeviceExt, Label};
 use core::num;
-use std::{iter::{self, repeat}, string, borrow::Cow};
+use std::{iter::{self, repeat}, string, borrow::Cow, mem};
 use winit::{
     window::{Window, WindowBuilder}, 
     event_loop::{ControlFlow, EventLoop},
     event::*,
 };
+use bytemuck::{Pod, Zeroable};
+
+struct Inputs <'a> {
+    pub source: ShaderSource<'a>,
+    pub topology: PrimitiveTopology,
+    pub strip_index_format: Option<IndexFormat>,
+    pub num_vertices: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct Vertex {
+    position: [f32; 2],
+    color: [f32; 3],
+}
+
+impl Vertex {
+    const ATTRIBUTES: [wgpu::VertexAttribute; 2] = 
+        wgpu::vertex_attr_array![0 => Float32x2, 1=> Float32x3];
+    
+    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &Self::ATTRIBUTES,
+            // attributes: &[
+            //     wgpu::VertexAttribute{
+            //         offset: 0,
+            //         shader_location: 0,
+            //         format: wgpu::VertexFormat::Float32x2,
+            //     },
+            //     wgpu::VertexAttribute{
+            //         offset: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
+            //         shader_location: 1,
+            //         format: wgpu::VertexFormat::Float32x3,
+            //     },
+            // ],
+        }
+    }
+}
+
+const VERTICES: &[Vertex] = &[
+    Vertex { position: [-0.5, -0.5], color: [0.0, 1.0, 0.0], },
+    Vertex { position: [ 0.5, -0.5], color: [0.0, 1.0, 0.0], },
+    Vertex { position: [-0.5,  0.5], color: [0.0, 1.0, 0.0], },
+    Vertex { position: [-0.5,  0.5], color: [0.0, 1.0, 0.0], },
+    Vertex { position: [ 0.5, -0.5], color: [0.0, 1.0, 0.0], },
+    Vertex { position: [ 0.5,  0.5], color: [0.0, 1.0, 0.0], },
+];
 
 struct State {
     surface: wgpu::Surface,
@@ -15,13 +65,7 @@ struct State {
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
     render_pipeline: wgpu::RenderPipeline,
-}
-
-struct Inputs <'a> {
-    pub source: ShaderSource<'a>,
-    pub topology: PrimitiveTopology,
-    pub strip_index_format: Option<IndexFormat>,
-    pub num_vertices: u32,
+    vertex_buffer: wgpu::Buffer,
 }
 
 impl State {
@@ -76,7 +120,7 @@ impl State {
         let shader = device.create_shader_module
                                     (wgpu::ShaderModuleDescriptor{
             label: Some("Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader_triangle.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shader_buffer.wgsl").into()),
         });
 
         // what we have done so far are basically just initialization steps
@@ -97,7 +141,8 @@ impl State {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: "vs_main",
-                buffers: &[],   // the buffer tells GPU what type of vertex we pass to vertex buffer
+                buffers: &[Vertex::desc()],   
+                                // the buffer tells GPU what type of vertex we pass to vertex buffer
                                 // since we just render a simple triangle, we defines the vertex in
                                 // vertex shader directly.
                                 // However, if we want GPU to store vertex data, we will need to palce
@@ -141,6 +186,12 @@ impl State {
             multiview: None,
         });
 
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertex Buffer"),
+            contents: bytemuck::cast_slice(VERTICES),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
         State{
             surface,
             device,
@@ -148,6 +199,7 @@ impl State {
             config,
             size,
             render_pipeline,
+            vertex_buffer,
         }
     }
 
@@ -171,7 +223,7 @@ impl State {
     // all GPU commands run asynchronously.
     // Therefore we made GPU commands into a list and fetch them when needed.
     // create_command_encoder store commands in the buffer and pass it to the GPU at some points
-    fn render(&mut self, num_vertices: u32) -> Result<(), wgpu::SurfaceError> {
+    fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture
@@ -203,7 +255,8 @@ impl State {
                                                 // really have a depth
             });
             render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.draw(0..num_vertices, 0..1);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.draw(0..6, 0..1);
             // pass in the in_vertex_index here
         }
 
@@ -234,6 +287,9 @@ pub async fn run(){
         index_format = Some(wgpu::IndexFormat::Uint32);
     }else if primitive_type == "triangle-strip" {
         topology = wgpu::PrimitiveTopology::TriangleStrip;
+        index_format = Some(wgpu::IndexFormat::Uint32);
+    }else if primitive_type == "point-list" {
+        topology = wgpu::PrimitiveTopology::PointList;
         index_format = Some(wgpu::IndexFormat::Uint32);
     }
 
@@ -285,7 +341,7 @@ pub async fn run(){
             }
             Event::RedrawRequested(window_id) if window_id == window.id() => {
                 state.update();
-                match state.render(num_vertices) {
+                match state.render() {
                     Ok(_) => {}
                     // Reconfigure the surface if it's lost or outdated
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => state.resize(state.size),
